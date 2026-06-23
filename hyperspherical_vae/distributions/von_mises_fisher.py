@@ -2,7 +2,7 @@ import math
 import torch
 from torch.distributions.kl import register_kl
 
-from hyperspherical_vae.ops.ive import ive, log_ive, ive_fraction_approx, ive_fraction_approx2
+from hyperspherical_vae.ops.ive import ive, log_ive, log_ive_pair, ive_fraction_approx, ive_fraction_approx2
 from hyperspherical_vae.distributions.hyperspherical_uniform import (
     HypersphericalUniform,
 )
@@ -20,11 +20,9 @@ class VonMisesFisher(torch.distributions.Distribution):
 
     @property
     def mean(self):
-        # option 1 (log-space, GPU-native log_ive; ratio = exp(log_ive_a - log_ive_b)):
-        return self.loc * torch.exp(
-            log_ive(self.__m / 2, self.scale)
-            - log_ive(self.__m / 2 - 1, self.scale)
-        )
+        # option 1 (log-space; one CF pass gives both orders, ratio = exp(diff)):
+        lv, lvm1 = log_ive_pair(self.__m / 2, self.scale)
+        return self.loc * torch.exp(lv - lvm1)
         # option 2:
         # return self.loc * ive_fraction_approx(torch.tensor(self.__m / 2), self.scale)
         # options 3:
@@ -175,17 +173,16 @@ class VonMisesFisher(torch.distributions.Distribution):
         return z
 
     def entropy(self):
-        # option 1 (log-space, GPU-native log_ive):
-        output = -self.scale * torch.exp(
-            log_ive(self.__m / 2, self.scale)
-            - log_ive((self.__m / 2) - 1, self.scale)
-        )
+        # option 1 (log-space): one CF pass yields log_ive(m/2) and log_ive(m/2-1);
+        # the ratio I_{m/2}/I_{m/2-1} and the log-normalizer both reuse it.
+        lv, lvm1 = log_ive_pair(self.__m / 2, self.scale)
+        output = -self.scale * torch.exp(lv - lvm1)
         # option 2:
         # output = - self.scale * ive_fraction_approx(torch.tensor(self.__m / 2), self.scale)
         # option 3:
         # output = - self.scale * ive_fraction_approx2(torch.tensor(self.__m / 2), self.scale)
 
-        return output.view(*(output.shape[:-1])) + self._log_normalization()
+        return output.view(*(output.shape[:-1])) + self._log_norm_from(lvm1)
 
     def log_prob(self, x):
         return self._log_unnormalized_prob(x) - self._log_normalization()
@@ -195,15 +192,18 @@ class VonMisesFisher(torch.distributions.Distribution):
 
         return output.view(*(output.shape[:-1]))
 
-    def _log_normalization(self):
+    def _log_norm_from(self, log_ive_vm1):
         # scale + log_ive(m/2-1, scale) == log I_{m/2-1}(scale)  (log-space, no underflow)
         output = -(
             (self.__m / 2 - 1) * torch.log(self.scale)
             - (self.__m / 2) * math.log(2 * math.pi)
-            - (self.scale + log_ive(self.__m / 2 - 1, self.scale))
+            - (self.scale + log_ive_vm1)
         )
 
         return output.view(*(output.shape[:-1]))
+
+    def _log_normalization(self):
+        return self._log_norm_from(log_ive(self.__m / 2 - 1, self.scale))
 
 
 @register_kl(VonMisesFisher, HypersphericalUniform)
