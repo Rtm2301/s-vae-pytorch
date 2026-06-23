@@ -1,7 +1,70 @@
+import math
+
 import torch
 import numpy as np
 import scipy.special
 from numbers import Number
+
+
+# ---------------------------------------------------------------------------
+# GPU-native, log-space modified Bessel function of the first kind.
+#
+# Computes  log ive(v, z) = log( I_v(z) * exp(-z) )  for integer order v >= 0
+# entirely on the GPU in pure PyTorch (so autograd flows through it and no
+# scipy / CPU round-trip is needed).
+#
+# It uses the downward continued fraction for the ratio R_n = I_n(z)/I_{n-1}(z):
+#       R_n = 1 / (2n/z + R_{n+1}),     R_{M+1} = 0
+# and accumulates in log-space:
+#       log ive(v, z) = log i0e(z) + sum_{n=1..v} log R_n
+# Every R_n lies in (0, 1), so this never under/overflows -- it stays accurate
+# in regimes (large v / small z, i.e. high latent dimension) where computing
+# ive(v, z) directly underflows to 0 even in float64 and scipy returns -inf.
+#
+# The inner recurrence is a sequential loop of length M, so it is wrapped in
+# torch.compile to fuse the iterations into efficient kernels (the eager loop
+# launches one tiny kernel per step and is far slower than scipy).
+# ---------------------------------------------------------------------------
+
+_LOG_IVE_COMPILED = {}
+
+
+def _log_ive_core(z, v, M):
+    """Downward continued-fraction evaluation of log ive(v, z). float64 in/out."""
+    R = torch.zeros_like(z)        # R_{M+1} = 0
+    logsum = torch.zeros_like(z)   # accumulates sum_{n=1..v} log R_n
+    for n in range(M, 0, -1):
+        R = 1.0 / (2.0 * n / z + R)
+        if n <= v:
+            logsum = logsum + torch.log(R)
+    return torch.log(torch.special.i0e(z)) + logsum
+
+
+def _get_compiled(v, M):
+    key = (v, M)
+    fn = _LOG_IVE_COMPILED.get(key)
+    if fn is None:
+        fn = torch.compile(lambda z, _v=v, _M=M: _log_ive_core(z, _v, _M))
+        _LOG_IVE_COMPILED[key] = fn
+    return fn
+
+
+def log_ive(v, z):
+    """log( I_v(z) * exp(-z) ) for integer order ``v`` >= 0, GPU + autograd.
+
+    ``z`` (the concentration) must be positive. Computed internally in float64
+    and returned in ``z``'s dtype. The continued-fraction length ``M`` is chosen
+    from the order and max(z) and bucketed so torch.compile only recompiles a
+    handful of times across a run.
+    """
+    v = int(round(float(v)))
+    z64 = z.double()
+    zmax = float(z64.detach().abs().max())
+    # M must exceed max(v, z) by a margin for the seeded recurrence to converge.
+    M = v + int(math.ceil(zmax)) + 60
+    M = ((M + 31) // 32) * 32  # bucket to limit torch.compile recompilations
+    out = _get_compiled(v, M)(z64)
+    return out.to(z.dtype)
 
 
 class IveFunction(torch.autograd.Function):

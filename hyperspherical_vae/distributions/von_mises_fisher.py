@@ -2,7 +2,7 @@ import math
 import torch
 from torch.distributions.kl import register_kl
 
-from hyperspherical_vae.ops.ive import ive, ive_fraction_approx, ive_fraction_approx2
+from hyperspherical_vae.ops.ive import ive, log_ive, ive_fraction_approx, ive_fraction_approx2
 from hyperspherical_vae.distributions.hyperspherical_uniform import (
     HypersphericalUniform,
 )
@@ -20,9 +20,10 @@ class VonMisesFisher(torch.distributions.Distribution):
 
     @property
     def mean(self):
-        # option 1:
-        return self.loc * (
-            ive(self.__m / 2, self.scale) / ive(self.__m / 2 - 1, self.scale)
+        # option 1 (log-space, GPU-native log_ive; ratio = exp(log_ive_a - log_ive_b)):
+        return self.loc * torch.exp(
+            log_ive(self.__m / 2, self.scale)
+            - log_ive(self.__m / 2 - 1, self.scale)
         )
         # option 2:
         # return self.loc * ive_fraction_approx(torch.tensor(self.__m / 2), self.scale)
@@ -174,11 +175,10 @@ class VonMisesFisher(torch.distributions.Distribution):
         return z
 
     def entropy(self):
-        # option 1:
-        output = (
-            -self.scale
-            * ive(self.__m / 2, self.scale)
-            / ive((self.__m / 2) - 1, self.scale)
+        # option 1 (log-space, GPU-native log_ive):
+        output = -self.scale * torch.exp(
+            log_ive(self.__m / 2, self.scale)
+            - log_ive((self.__m / 2) - 1, self.scale)
         )
         # option 2:
         # output = - self.scale * ive_fraction_approx(torch.tensor(self.__m / 2), self.scale)
@@ -196,10 +196,11 @@ class VonMisesFisher(torch.distributions.Distribution):
         return output.view(*(output.shape[:-1]))
 
     def _log_normalization(self):
+        # scale + log_ive(m/2-1, scale) == log I_{m/2-1}(scale)  (log-space, no underflow)
         output = -(
             (self.__m / 2 - 1) * torch.log(self.scale)
             - (self.__m / 2) * math.log(2 * math.pi)
-            - (self.scale + torch.log(ive(self.__m / 2 - 1, self.scale)))
+            - (self.scale + log_ive(self.__m / 2 - 1, self.scale))
         )
 
         return output.view(*(output.shape[:-1]))
