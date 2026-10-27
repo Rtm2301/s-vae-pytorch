@@ -163,7 +163,10 @@ class VonMisesFisher(torch.distributions.Distribution):
 
     def __householder_rotation(self, x):
         u = self.__e1 - self.loc
-        u = u / (u.norm(dim=-1, keepdim=True) + 1e-5)
+        # normalize exactly: "+ eps" in the denominator leaves u non-unit, so the
+        # reflection is not orthogonal and pushes z off the sphere when loc ~ e1
+        # (||z|| off by up to ~7% at ||e1 - loc|| ~ 1e-5). u == 0 (loc == e1) -> identity.
+        u = u / u.norm(dim=-1, keepdim=True).clamp_min(torch.finfo(u.dtype).tiny)
         z = x - 2 * (x * u).sum(-1, keepdim=True) * u
         return z
 
