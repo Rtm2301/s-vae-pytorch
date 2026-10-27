@@ -32,7 +32,7 @@ class VonMisesFisher(torch.distributions.Distribution):
     def stddev(self):
         return self.scale.to(self.dtype)
 
-    def __init__(self, loc, scale, validate_args=None, k=1):
+    def __init__(self, loc, scale, validate_args=None, k=5):
         self.dtype = loc.dtype
         # compute in at least float32: in fp16/bf16, 4*scale**2 overflows (the rejection
         # sampler then never accepts) and the entropy/log-normalizer terms cancel badly
