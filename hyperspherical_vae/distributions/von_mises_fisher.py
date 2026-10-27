@@ -36,7 +36,8 @@ class VonMisesFisher(torch.distributions.Distribution):
         self.dtype = loc.dtype
         # compute in at least float32: in fp16/bf16, 4*scale**2 overflows (the rejection
         # sampler then never accepts) and the entropy/log-normalizer terms cancel badly
-        self._cdtype = torch.promote_types(loc.dtype, torch.float32)
+        # (no torch.promote_types: it does not exist before PyTorch 1.3/1.4)
+        self._cdtype = torch.float64 if loc.dtype == torch.float64 else torch.float32
         self.loc = loc.to(self._cdtype)
         self.scale = scale.to(self._cdtype)
         self.device = loc.device
