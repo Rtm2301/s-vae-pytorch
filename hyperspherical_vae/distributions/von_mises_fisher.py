@@ -22,7 +22,7 @@ class VonMisesFisher(torch.distributions.Distribution):
     def mean(self):
         # option 1 (log-space; one CF pass gives both orders, ratio = exp(diff)):
         lv, lvm1 = log_ive_pair(self.__m / 2, self.scale)
-        return self.loc * torch.exp(lv - lvm1)
+        return (self.loc * torch.exp(lv - lvm1)).to(self.dtype)
         # option 2:
         # return self.loc * ive_fraction_approx(torch.tensor(self.__m / 2), self.scale)
         # options 3:
@@ -30,12 +30,15 @@ class VonMisesFisher(torch.distributions.Distribution):
 
     @property
     def stddev(self):
-        return self.scale
+        return self.scale.to(self.dtype)
 
     def __init__(self, loc, scale, validate_args=None, k=1):
         self.dtype = loc.dtype
-        self.loc = loc
-        self.scale = scale
+        # compute in at least float32: in fp16/bf16, 4*scale**2 overflows (the rejection
+        # sampler then never accepts) and the entropy/log-normalizer terms cancel badly
+        self._cdtype = torch.promote_types(loc.dtype, torch.float32)
+        self.loc = loc.to(self._cdtype)
+        self.scale = scale.to(self._cdtype)
         self.device = loc.device
         self.__m = loc.shape[-1]
         self.__e1 = (torch.Tensor([1.0] + [0] * (loc.shape[-1] - 1))).to(self.device)
@@ -91,10 +94,10 @@ class VonMisesFisher(torch.distributions.Distribution):
         b_app = (self.__m - 1) / (4 * self.scale)
         s = torch.min(
             torch.max(
-                torch.tensor([0.0], dtype=self.dtype, device=self.device),
+                torch.tensor([0.0], dtype=self._cdtype, device=self.device),
                 self.scale - 10,
             ),
-            torch.tensor([1.0], dtype=self.dtype, device=self.device),
+            torch.tensor([1.0], dtype=self._cdtype, device=self.device),
         )
         b = b_app * s + b_true * (1 - s)
 
@@ -136,14 +139,14 @@ class VonMisesFisher(torch.distributions.Distribution):
                 torch.distributions.Beta(con1, con2)
                 .sample(sample_shape)
                 .to(self.device)
-                .type(self.dtype)
+                .type(self._cdtype)
             )
 
             u = (
                 torch.distributions.Uniform(0 + eps, 1 - eps)
                 .sample(sample_shape)
                 .to(self.device)
-                .type(self.dtype)
+                .type(self._cdtype)
             )
 
             w_ = (1 - (1 + b) * e_) / (1 - (1 - b) * e_)
@@ -182,10 +185,10 @@ class VonMisesFisher(torch.distributions.Distribution):
         # option 3:
         # output = - self.scale * ive_fraction_approx2(torch.tensor(self.__m / 2), self.scale)
 
-        return output.view(*(output.shape[:-1])) + self._log_norm_from(lvm1)
+        return (output.view(*(output.shape[:-1])) + self._log_norm_from(lvm1)).to(self.dtype)
 
     def log_prob(self, x):
-        return self._log_unnormalized_prob(x) - self._log_normalization()
+        return (self._log_unnormalized_prob(x) - self._log_normalization()).to(self.dtype)
 
     def _log_unnormalized_prob(self, x):
         output = self.scale * (self.loc * x).sum(-1, keepdim=True)
