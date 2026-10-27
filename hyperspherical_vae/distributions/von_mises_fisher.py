@@ -20,7 +20,7 @@ class VonMisesFisher(torch.distributions.Distribution):
 
     @property
     def mean(self):
-        # option 1 (log-space; one CF pass gives both orders, ratio = exp(diff)):
+        # option 1 (log-space; one series pass gives both orders, ratio = exp(diff)):
         lv, lvm1 = log_ive_pair(self.__m / 2, self.scale)
         return (self.loc * torch.exp(lv - lvm1)).to(self.dtype)
         # option 2:
@@ -171,7 +171,7 @@ class VonMisesFisher(torch.distributions.Distribution):
         return z
 
     def entropy(self):
-        # option 1 (log-space): one CF pass yields log_ive(m/2) and log_ive(m/2-1);
+        # option 1 (log-space): one series pass yields log_ive(m/2) and log_ive(m/2-1);
         # the ratio I_{m/2}/I_{m/2-1} and the log-normalizer both reuse it.
         lv, lvm1 = log_ive_pair(self.__m / 2, self.scale)
         output = -self.scale * torch.exp(lv - lvm1)
