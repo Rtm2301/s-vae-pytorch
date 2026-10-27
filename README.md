@@ -8,8 +8,11 @@ This library contains a Pytorch implementation of the hyperspherical variational
 
 ## Dependencies
 
-* **python>=3.6**
-* **pytorch>=0.4.1**: https://pytorch.org
+* **python>=3.7**
+* **pytorch>=1.2**: https://pytorch.org
+  * float32: pytorch>=1.2
+  * float64: pytorch>=1.6
+  * float16 / bfloat16 (computed internally in float32): tested with pytorch 2.4 on GPU
 * **scipy**: https://scipy.org
 * **numpy**: https://www.numpy.org
 
