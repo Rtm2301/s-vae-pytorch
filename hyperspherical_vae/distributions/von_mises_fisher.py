@@ -87,19 +87,11 @@ class VonMisesFisher(torch.distributions.Distribution):
 
     def __sample_w_rej(self, shape):
         c = torch.sqrt((4 * (self.scale ** 2)) + (self.__m - 1) ** 2)
-        b_true = (-2 * self.scale + c) / (self.__m - 1)
-
-        # using Taylor approximation with a smooth swift from 10 < scale < 11
-        # to avoid numerical errors for large scale
-        b_app = (self.__m - 1) / (4 * self.scale)
-        s = torch.min(
-            torch.max(
-                torch.tensor([0.0], dtype=self._cdtype, device=self.device),
-                self.scale - 10,
-            ),
-            torch.tensor([1.0], dtype=self._cdtype, device=self.device),
-        )
-        b = b_app * s + b_true * (1 - s)
+        # Wood's b = (-2*scale + c) / (m-1), rationalized so there is no cancellation
+        # for large scale. (The former Taylor b ~ (m-1)/(4*scale), switched in for
+        # scale > 10, is only valid for scale >> m: it is inconsistent with `a` and
+        # breaks the rejection bound, biasing samples badly, e.g. m=64, scale=20.)
+        b = (self.__m - 1) / (2 * self.scale + c)
 
         a = (self.__m - 1 + 2 * self.scale + c) / 4
         d = (4 * a * b) / (1 + b) - (self.__m - 1) * math.log(self.__m - 1)
